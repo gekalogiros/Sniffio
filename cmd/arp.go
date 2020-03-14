@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"github.com/gekalogiros/sniffio/utilities"
+	"sync"
+	"log"
 	"io"
 	"net"
 	"bytes"
@@ -8,23 +11,50 @@ import (
 	"time"
 	"fmt"
 	"encoding/binary"
-	"strconv"
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
 	"github.com/google/gopacket/pcap"
 	"github.com/spf13/cobra"
-	. "github.com/logrusorgru/aurora"
+	color "github.com/logrusorgru/aurora"
+)
+
+var (
+	macLookup utilities.MacLookup
 )
 
 // NewArpCommand creates the arp command
 func NewArpCommand(out io.Writer) * cobra.Command {
-	return &cobra.Command{
+
+	macLookup = utilities.NewMacLookup()
+	macLookup.Load()
+
+	arpCommand := &cobra.Command{
 		Use:   "arp",
-		Short: "Sniff arp traffic",
+		Short: "Sniffs arp traffic",
+	}
+
+	traffic := &cobra.Command{
+		Use:   "traffic",
+		Short: "Request/Reply arp packets",
 		Run: func(cmd *cobra.Command, args []string) {
 			sniff(out)
 		},
 	}
+
+	devices := &cobra.Command{
+		Use:   "devices",
+		Short: "Finds devices in your local network",
+		Run: func(cmd *cobra.Command, args []string) {
+			detect(out)
+		},
+	}
+
+	arpCommand.AddCommand(
+		traffic, 
+		devices,
+	)
+
+	return arpCommand
 }
 
 func sniff(out io.Writer){
@@ -47,26 +77,35 @@ func sniff(out io.Writer){
 
 			arp, _ := arpLayer.(*layers.ARP)
 
-			s := `Operation %s
-Source: %s - %s
-Destination: %s - %s
-
+			s := `
+Operation %s
+Source: %s - %s - %s
+Destination: %s - %s - %s
 `
 			operationType := arpOperation(arp.Operation)
 
 			var operationTypeColoured interface {} 
 
 			if operationType == "Request" {
-				operationTypeColoured = Green(operationType)
+				operationTypeColoured = color.Green(operationType)
 			} else {
-				operationTypeColoured = Red(operationType)
+				operationTypeColoured = color.Red(operationType)
 			}
-
+			
+			sourceIP := ip(arp.SourceProtAddress)
+			sourceMac := mac(arp.SourceHwAddress)
+			sourceVendor := macLookup.LookupVendor(strings.ToUpper(sourceMac))
+			destinationIP := ip(arp.DstProtAddress)
+			destinationMac := mac(arp.DstHwAddress)
+			destinationVendor := macLookup.LookupVendor(strings.ToUpper(destinationMac))
+			
 			fmt.Fprintf(out, s, operationTypeColoured,
-				Green(ip(arp.SourceProtAddress)),
-				Green(mac(arp.SourceHwAddress)),
-				Green(ip(arp.DstProtAddress)),
-				Green(mac(arp.DstHwAddress)),
+				color.Gray(5, sourceIP),
+				color.Gray(5, sourceMac),
+				color.Gray(5, sourceVendor),
+				color.Gray(5, destinationIP),
+				color.Gray(5, destinationMac),
+				color.Gray(5, destinationVendor),
 			)
 		}
 	}
@@ -100,92 +139,138 @@ func arpOperation(operation uint16) string {
 	return operationAsString
 }
 
-func detect(){
+func detect(out io.Writer){
+	// Get a list of all interfaces.
 	ifaces, err := net.Interfaces()
-
-	if (err != nil){
+	if err != nil {
 		panic(err)
 	}
 
-	if err == nil {
-
-		for _, iface := range ifaces {
-
-			var addrs, err = iface.Addrs();
-
-			if (err != nil) {
-				panic(err)
+	var wg sync.WaitGroup
+	for _, iface := range ifaces {
+		wg.Add(1)
+		// Start up a scan on each interface.
+		go func(iface net.Interface) {
+			defer wg.Done()
+			if err := scan(&iface); err != nil {
+				log.Printf("interface %v: %v", iface.Name, err)
 			}
-			
-			for _, addr := range addrs {
-				
-				ip, ipnet, err := net.ParseCIDR(addr.String())
+		}(iface)
+	}
+	// Wait for all interfaces' scans to complete.  They'll try to run
+	// forever, but will stop on an error, so if we get past this Wait
+	// it means all attempts to write have failed.
+	wg.Wait() 
+}
 
-				if err != nil {
-					panic(err)
-				}
-
-				ipv4 := ip.To4()
-				mask := ipnet.Mask[len(ipnet.Mask)-4:]
-
-				if (ipv4 == nil || ipv4[0] == 127 || (mask[0] != 0xff || mask[1] != 0xff)){
-					continue
-				}
-
-				println("Interface: " + iface.Name + ", Network: " + ipnet.String() + ", IP: " + ipv4.String())
-
-				handle, err := pcap.OpenLive(iface.Name, 65536, true, pcap.BlockForever)
-				if err != nil {
-					panic(err)
-				}
-				defer handle.Close()
-
-				stop := make(chan struct{})
-				
-				go read(handle, &iface, stop)
-				defer close(stop)
-
-				for {
-
-					if err := write(handle, iface, *ipnet); err != nil {
-						println("error writing packets on %v: %v", iface.Name, err)
+// scan scans an individual interface's local network for machines using ARP requests/replies.
+//
+// scan loops forever, sending packets out regularly.  It returns an error if
+// it's ever unable to write a packet.
+func scan(iface *net.Interface) error {
+	// We just look for IPv4 addresses, so try to find if the interface has one.
+	var addr *net.IPNet
+	if addrs, err := iface.Addrs(); err != nil {
+		return err
+	} else {
+		for _, a := range addrs {
+			if ipnet, ok := a.(*net.IPNet); ok {
+				if ip4 := ipnet.IP.To4(); ip4 != nil {
+					addr = &net.IPNet{
+						IP:   ip4,
+						Mask: ipnet.Mask[len(ipnet.Mask)-4:],
 					}
-
-					time.Sleep(10 * time.Second)
+					break
 				}
 			}
 		}
-	} 
+	}
+	// Sanity-check that the interface has a good address.
+	// if addr == nil {
+	// 	return errors.New("no good IP network found")
+	// } else if addr.IP[0] == 127 {
+	// 	return errors.New("skipping localhost")
+	// } else if addr.Mask[0] != 0xff || addr.Mask[1] != 0xff {
+	// 	return errors.New("mask means network is too large")
+	// }
+	if addr != nil && addr.IP[0] != 127 && (addr.Mask[0] == 0xff || addr.Mask[1] == 0xff) {
+		log.Printf("Using network range %v for interface %v", addr, iface.Name)
+
+		// Open up a pcap handle for packet reads/writes.
+		handle, err := pcap.OpenLive(iface.Name, 65536, true, pcap.BlockForever)
+		if err != nil {
+			return err
+		}
+		defer handle.Close()
+	
+		// Start up a goroutine to read in packet data.
+		stop := make(chan struct{})
+		go readARP(handle, iface, stop)
+		defer close(stop)
+		//for {
+			// Write our scan packets out to the handle.
+			if err := writeARP(handle, iface, addr); err != nil {
+				log.Printf("error writing packets on %v: %v", iface.Name, err)
+				return err
+			}
+			// We don't know exactly how long it'll take for packets to be
+			// sent back to us, but 10 seconds should be more than enough
+			// time ;)
+			time.Sleep(15 * time.Second)
+		//}
+	}
+	
+	return nil
 }
 
-func read(handle *pcap.Handle, iface *net.Interface, stop chan struct{}) {
-	in := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet).Packets()
+// readARP watches a handle for incoming ARP responses we might care about, and prints them.
+//
+// readARP loops until 'stop' is closed.
+func readARP(handle *pcap.Handle, iface *net.Interface, stop chan struct{}) {
+	src := gopacket.NewPacketSource(handle, layers.LayerTypeEthernet)
+	in := src.Packets()
 	for {
 		var packet gopacket.Packet
 		select {
-		case <- stop:
+		case <-stop:
 			return
-		case packet = <- in:
+		case packet = <-in:
 			arpLayer := packet.Layer(layers.LayerTypeARP)
 			if arpLayer == nil {
 				continue
 			}
 			arp := arpLayer.(*layers.ARP)
 			if arp.Operation != layers.ARPReply || bytes.Equal([]byte(iface.HardwareAddr), arp.SourceHwAddress) {
+				// This is a packet I sent.
 				continue
 			}
-			println("IP: " + net.IP(arp.SourceProtAddress).String() + ", Device: " + net.HardwareAddr(arp.SourceHwAddress).String())
+			// Note:  we might get some packets here that aren't responses to ones we've sent,
+			// if for example someone else sends US an ARP request.  Doesn't much matter, though...
+			// all information is good information :)
+			macAddress := net.HardwareAddr(arp.SourceHwAddress)
+			vendor := macLookup.LookupVendor(strings.ToUpper(macAddress.String()))
+
+			fmt.Printf(`
+IP: %s
+Manufacturer: %s
+`,
+				color.Green(net.IP(arp.SourceProtAddress).String()),
+				color.Green(vendor),
+			)
 		}
 	}
 }
 
-func write(handle *pcap.Handle, iface net.Interface, addr net.IPNet) error {
-	eth := layers.Ethernet {
+// writeARP writes an ARP request for each address on our local network to the
+// pcap handle.
+func writeARP(handle *pcap.Handle, iface *net.Interface, addr *net.IPNet) error {
+	// Set up all the layers' fields we can.
+	eth := layers.Ethernet{
 		SrcMAC:       iface.HardwareAddr,
 		DstMAC:       net.HardwareAddr{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 		EthernetType: layers.EthernetTypeARP,
 	}
-	arp := layers.ARP {
+	arp := layers.ARP{
 		AddrType:          layers.LinkTypeEthernet,
 		Protocol:          layers.EthernetTypeIPv4,
 		HwAddressSize:     6,
@@ -195,38 +280,26 @@ func write(handle *pcap.Handle, iface net.Interface, addr net.IPNet) error {
 		SourceProtAddress: []byte(addr.IP),
 		DstHwAddress:      []byte{0, 0, 0, 0, 0, 0},
 	}
-	buffer := gopacket.NewSerializeBuffer()
+	// Set up buffer and options for serialization.
+	buf := gopacket.NewSerializeBuffer()
 	opts := gopacket.SerializeOptions{
 		FixLengths:       true,
 		ComputeChecksums: true,
 	}
-	
-	gopacket.SerializeLayers(buffer, opts, &eth, &arp)
-
-	generatedIps := ips(&addr)
-
-	size := len(generatedIps)
-	
-	println("size" + strconv.Itoa(size))
-
-	for _, ip := range generatedIps {
-
-		fmt.Println(ip)
-
-		// println("Write to" + ip.String())
-
-		// arp.DstProtAddress = []byte(ip)
-		
-		// gopacket.SerializeLayers(buffer, opts, &eth, &arp)
-
-		// if err := handle.WritePacketData(buffer.Bytes()); err != nil {
-		// 	return err
-		// }
+	// Send one packet for every address.
+	for _, ip := range ips(addr) {
+		arp.DstProtAddress = []byte(ip)
+		gopacket.SerializeLayers(buf, opts, &eth, &arp)
+		if err := handle.WritePacketData(buf.Bytes()); err != nil {
+			return err
+		}
 	}
-	
 	return nil
 }
 
+// ips is a simple and not very good method for getting all IPv4 addresses from a
+// net.IPNet.  It returns all IPs it can over the channel it sends back, closing
+// the channel when done.
 func ips(n *net.IPNet) (out []net.IP) {
 	num := binary.BigEndian.Uint32([]byte(n.IP))
 	mask := binary.BigEndian.Uint32([]byte(n.Mask))
@@ -240,14 +313,4 @@ func ips(n *net.IPNet) (out []net.IP) {
 	}
 	return
 }
-
-func increment(ip net.IP) {
-	for i := len(ip) - 1; i >= 0; i-- {
-		ip[i]++
-		if ip[i] != 0 {
-			break
-		}
-	}
-}
-  
   

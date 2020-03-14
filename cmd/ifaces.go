@@ -10,8 +10,8 @@ import (
 // NewIfacesCommand creates the ifaces sub-command
 func NewIfacesCommand(out io.Writer) * cobra.Command {
 	return &cobra.Command{
-		Use:   "interface",
-		Short: "List all Network Interfaces that exist in the current machine",
+		Use:   "ifaces",
+		Short: "Lists all network interfaces that exist in this machine",
 		Run: func(cmd *cobra.Command, args []string) {
 			findNetworkInterfaces(out)
 		},

@@ -11,11 +11,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// NewTcpCommand creates the tcp command
-func NewTcpCommand(out io.Writer) * cobra.Command {
+// NewTCPCommand creates the tcp command
+func NewTCPCommand(out io.Writer) * cobra.Command {
 	return &cobra.Command{
 		Use:   "tcp",
-		Short: "Sniff tcp traffic",
+		Short: "Sniffs http traffic at your local interface",
 		Run: func(cmd *cobra.Command, args []string) {
 			executePcap(out)
 		},
@@ -23,16 +23,6 @@ func NewTcpCommand(out io.Writer) * cobra.Command {
 }
 
 func executePcap(out io.Writer){
-
-	// interfaces, err := pcap.FindAllDevs()
-
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// for _, iface := range interfaces {
-	// 	println(iface.Name)
-	// }
 
 	handle, err := pcap.OpenLive("lo0", 65536, true, pcap.BlockForever)
 
