@@ -249,12 +249,17 @@ func readARP(handle *pcap.Handle, iface *net.Interface, stop chan struct{}) {
 			// all information is good information :)
 			macAddress := net.HardwareAddr(arp.SourceHwAddress)
 			vendor := macLookup.LookupVendor(strings.ToUpper(macAddress.String()))
+			ip := net.IP(arp.SourceProtAddress).String()
 
+			ptr, _ := net.LookupAddr(ip)
+
+			fmt.Println(ptr)
+			
 			fmt.Printf(`
 IP: %s
 Manufacturer: %s
 `,
-				color.Green(net.IP(arp.SourceProtAddress).String()),
+				color.Green(ip),
 				color.Green(vendor),
 			)
 		}

@@ -1,8 +1,9 @@
 package cmd
 
 import (
+	"strconv"
 	"io"
-	"net"
+	// "net"
 	"strings"
 	"github.com/google/gopacket/layers"
 	"fmt"
@@ -13,16 +14,21 @@ import (
 
 // NewTCPCommand creates the tcp command
 func NewTCPCommand(out io.Writer) * cobra.Command {
-	return &cobra.Command{
+	var port int
+	tcpCommand := &cobra.Command{
 		Use:   "tcp",
 		Short: "Sniffs http traffic at your local interface",
 		Run: func(cmd *cobra.Command, args []string) {
-			executePcap(out)
+			executePcap(out, port)
 		},
 	}
+
+	tcpCommand.Flags().IntVarP(&port, "port", "p", 8080, "port to sniff traffic on")
+
+	return tcpCommand
 }
 
-func executePcap(out io.Writer){
+func executePcap(out io.Writer, port int){
 
 	handle, err := pcap.OpenLive("lo0", 65536, true, pcap.BlockForever)
 
@@ -63,7 +69,7 @@ func executePcap(out io.Writer){
 
 			tcp, _ := tcpLayer.(*layers.TCP)
 
-			if fmt.Sprintf("%d", tcp.DstPort) == "8080" {
+			if fmt.Sprintf("%d", tcp.DstPort) == strconv.Itoa(port) {
 				
 				payload := string(tcp.Payload);
 
@@ -78,21 +84,14 @@ func executePcap(out io.Writer){
 					fmt.Printf("Is SYN: %t \n", tcp.SYN)
 					fmt.Printf("IS ACK: %t \n", tcp.ACK)
 					fmt.Printf("IS FIN: %t \n", tcp.FIN)
-
-					host, err := net.LookupAddr("192.168.0.51")
-					if err == nil {
-						fmt.Println(host)
-					} else {
-						fmt.Println(err)
-					}
 				}
 
-				if tcp.SYN {
-					fmt.Println("[SYN] ")
-				}
-				if tcp.FIN {
-					fmt.Println("[FIN] ")
-				}
+				// if tcp.SYN {
+				// 	fmt.Println("[SYN] ")
+				// }
+				// if tcp.FIN {
+				// 	fmt.Println("[FIN] ")
+				// }
 			}
 		}
 	}

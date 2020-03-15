@@ -13,17 +13,17 @@ func TestNewIfacesCommand(t *testing.T) {
 		wantUse string
 		wantShort string
 	}{
-		{"Command, Short Description", "interface", "List all Network Interfaces that exist in the current machine"},
+		{"Test Descriptions", "ifaces", "Lists all network interfaces that exist in this machine"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &bytes.Buffer{}
 			got := NewIfacesCommand(out)
 			if !reflect.DeepEqual(got.Use, tt.wantUse) {
-				t.Errorf("NewIfacesCommand() = %v, want %v", got, tt.wantUse)
+				t.Errorf("NewIfacesCommand() = %v, want %v", got.Use, tt.wantUse)
 			}
 			if !reflect.DeepEqual(got.Short, tt.wantShort) {
-				t.Errorf("NewIfacesCommand() = %v, want %v", got, tt.wantShort)
+				t.Errorf("NewIfacesCommand() = %v, want %v", got.Short, tt.wantShort)
 			}
 		})
 	}
