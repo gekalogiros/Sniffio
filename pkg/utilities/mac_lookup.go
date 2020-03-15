@@ -27687,16 +27687,9 @@ func NewMacLookup() MacLookup {
 	}
 }
 
+// Load Load mac-vendor lookup data
 func (f StringBasedMacLookup) Load(){
 	if len(f.data) == 0 {
-		// Open the file
-		// csvfile, err := os.Open(f.file)
-		// if err != nil {
-		// 	log.Fatalln("Couldn't open the csv file", err)
-		// }
-
-		// Parse the file
-		// r := csv.NewReader(csvfile)
 		r := csv.NewReader(strings.NewReader(f.text))
 
 		for {

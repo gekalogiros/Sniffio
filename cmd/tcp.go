@@ -97,15 +97,6 @@ func executePcap(out io.Writer, port int){
 	}
 }
 
-func convertToHex(data []byte) []string {
-	
-	var hexBytesArray = make([]string, len(data))
-	
-	for i,b :=range data {
-		hexBytesArray[i] = fmt.Sprintf("%X", b)
-	}
-	
-	return hexBytesArray
-}
+
   
   
