@@ -19,7 +19,7 @@ func ConvertToHex(data []byte) []string {
 	return hexBytesArray
 }
 
-// IP Converts a byte array to an IP address
+// IP Converts a byte array to an IP address separated by decimal numbers and dots
 func IP(data []byte) string {
 	
 	var ipPartAsString = make([]string, len(data))
